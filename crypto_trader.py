@@ -2947,8 +2947,10 @@ class CryptoTrader:
                     self.logger.error(f"处理{coin}时出错: {str(e)}")
                     save_new_url(new_url)
 
-            self.enable_url_monitoring()
-            self.refresh_page()
+            # 参考start_login_monitoring函数，使用定时器延迟启动URL监控和页面刷新
+            self.url_check_timer = self.root.after(10000, self.enable_url_monitoring)
+            self.refresh_page_timer = self.root.after(240000, self.enable_refresh_page)
+            self.logger.info("✅ 已重新启用URL监控和页面刷新")
             
         except Exception as e:
             self.logger.error(f"自动找币异常: {str(e)}")
@@ -3516,7 +3518,7 @@ class CryptoTrader:
                 if login_button:
                     self.logger.info("✅ 已发现登录按钮,尝试登录")
                     self.stop_url_monitoring(should_reset=True)
-                    self.stop_refresh_page()
+                    self.stop_refresh_page(should_reset=True)
 
                     login_button.click()
                     time.sleep(1)
