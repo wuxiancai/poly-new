@@ -362,9 +362,9 @@ class CryptoTrader:
         else:  # Linux and others
             # 使用Ubuntu LXDE更常见的字体
             small_font = ('Ubuntu', 10, 'normal')
-            base_font = ('Ubuntu', 12, 'normal')
+            base_font = ('Ubuntu', 10, 'normal')
             bold_font = ('Ubuntu', 10, 'bold')
-            large_font = ('Ubuntu', 14, 'normal')
+            large_font = ('Ubuntu', 12, 'normal')
             
             # 尝试加载字体，如果失败则回退到通用字体
             try:
