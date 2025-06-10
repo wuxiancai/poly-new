@@ -637,7 +637,7 @@ class CryptoTrader:
             shares_label.pack()
             setattr(self, shares_attr, shares_label)
 
-        # 资金显示区域
+        # 实时资金显示区域
         balance_frame = ttk.LabelFrame(
             scrollable_frame, 
             text=get_label_text("💳 Account Balance", is_mac), 
@@ -659,7 +659,7 @@ class CryptoTrader:
             item_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
             
             balance_label = ttk.Label(item_frame, text=default_text, 
-                                     font=(base_font[0], 16, 'bold'), foreground='#16A34A')
+                                     font=(base_font[0], 14), foreground='#16A34A')
             balance_label.pack()
             setattr(self, attr_name, balance_label)
         
