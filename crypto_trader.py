@@ -2893,6 +2893,23 @@ class CryptoTrader:
                 self.driver.refresh()
         return False
 
+    def schedule_auto_find_coin(self):
+        """安排每天3点30分执行自动找币"""
+        now = datetime.now()
+        # 计算下一个3点2分的时间
+        next_run = now.replace(hour=20, minute=31, second=0, microsecond=0)
+        if now >= next_run:
+            next_run += timedelta(days=1)
+        
+        # 计算等待时间(毫秒)
+        wait_time = (next_run - now).total_seconds() * 1000
+        wait_time_hours = wait_time / 3600000
+        
+        # 设置定时器
+        selected_coin = self.coin_combobox.get()
+        self.root.after(int(wait_time), lambda: self.find_54_coin(selected_coin))
+        self.logger.info(f"✅ \033[34m{round(wait_time_hours,2)}\033[0m小时后,开始自动找币")
+
     def find_54_coin(self,coin_type):
         """自动找币"""
         self.logger.info("✅ 开始自动找币")
@@ -3703,6 +3720,18 @@ class CryptoTrader:
         except Exception as e:
             self.logger.error(f"停止页面刷新失败: {str(e)}")
 
+    def enable_refresh_page(self):
+        """启用页面刷新"""
+        try:
+            # 重置禁用标志
+            self.refresh_page_disabled = False
+            
+            # 启动页面刷新
+            self.refresh_page()
+            self.logger.info("✅ 已重新启用页面刷新")
+        except Exception as e:
+            self.logger.error(f"启用页面刷新失败: {str(e)}")
+
     def close_windows(self):
         """关闭多余窗口"""
         # 检查并关闭多余的窗口，只保留一个
@@ -3890,35 +3919,6 @@ class CryptoTrader:
             # 每隔 1 小时检查一次,先关闭之前的定时器
             self.root.after_cancel(self.monitor_xpath_timer)
             self.root.after(3600000, self.monitor_xpath_elements)
-
-    def schedule_auto_find_coin(self):
-        """安排每天3点30分执行自动找币"""
-        now = datetime.now()
-        # 计算下一个3点2分的时间
-        next_run = now.replace(hour=3, minute=30, second=0, microsecond=0)
-        if now >= next_run:
-            next_run += timedelta(days=1)
-        
-        # 计算等待时间(毫秒)
-        wait_time = (next_run - now).total_seconds() * 1000
-        wait_time_hours = wait_time / 3600000
-        
-        # 设置定时器
-        selected_coin = self.coin_combobox.get()
-        self.root.after(int(wait_time), lambda: self.find_54_coin(selected_coin))
-        self.logger.info(f"✅ \033[34m{round(wait_time_hours,2)}\033[0m小时后,开始自动找币")
-
-    def enable_refresh_page(self):
-        """启用页面刷新"""
-        try:
-            # 重置禁用标志
-            self.refresh_page_disabled = False
-            
-            # 启动页面刷新
-            self.refresh_page()
-            self.logger.info("✅ 已重新启用页面刷新")
-        except Exception as e:
-            self.logger.error(f"启用页面刷新失败: {str(e)}")
 
     def _send_chrome_alert_email(self):
         """发送Chrome异常警报邮件"""
