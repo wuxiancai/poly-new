@@ -818,10 +818,10 @@ class CryptoTrader:
         # 计算并设置窗口的初始大小
         final_width = 460 if platform.system() != 'Darwin' else 460
         # 高度自适应，但有最小和最大值
-        final_height = max(400, min(content_height + 20, 800))
+        final_height = max(400, min(content_height + 20, 1000))
 
         self.root.geometry(f'{final_width}x{final_height}+0+0')
-        self.root.minsize(460 if platform.system() != 'Darwin' else 460, 1000)
+        self.root.minsize(460 if platform.system() != 'Darwin' else 460, 1050)
         
         # 调整LXDE下的DPI设置以改善显示
         if platform.system() != 'Darwin':
