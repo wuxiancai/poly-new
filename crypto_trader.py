@@ -354,26 +354,26 @@ class CryptoTrader:
         
         # 根据系统设置字体
         if platform.system() == 'Darwin':
-            small_font = ('SF Pro Display', 8, 'normal')
-            base_font = ('SF Pro Display', 10, 'normal')
+            small_font = ('SF Pro Display', 10, 'normal')
+            base_font = ('SF Pro Display', 12, 'normal')
             bold_font = ('SF Pro Display', 10, 'bold')
-            large_font = ('SF Pro Display', 12, 'normal')
+            large_font = ('SF Pro Display', 14, 'normal')
             
         else:  # Linux and others
             # 使用Ubuntu LXDE更常见的字体
-            small_font = ('Ubuntu', 8, 'normal')
-            base_font = ('Ubuntu', 10, 'normal')
+            small_font = ('Ubuntu', 10, 'normal')
+            base_font = ('Ubuntu', 12, 'normal')
             bold_font = ('Ubuntu', 10, 'bold')
-            large_font = ('Ubuntu', 12, 'normal')
+            large_font = ('Ubuntu', 14, 'normal')
             
             # 尝试加载字体，如果失败则回退到通用字体
             try:
                 self.root.tk.call('tk', 'fontchooser', 'configure', '-font', 'Ubuntu')
             except:
-                small_font = ('Sans', 8, 'normal')
-                base_font = ('Sans', 10, 'normal')
-                bold_font = ('Sans', 10, 'bold')
-                large_font = ('Sans', 12, 'normal')
+                small_font = ('Sans', 10, 'normal')
+                base_font = ('Sans', 12, 'normal')
+                bold_font = ('Sans', 12, 'bold')
+                large_font = ('Sans', 14, 'normal')
         
         # 配置样式
         styles_config = {
@@ -630,10 +630,10 @@ class CryptoTrader:
             # 针对LXDE环境使用更简单的颜色显示方式
             if platform.system() != 'Darwin':
                 shares_label = ttk.Label(shares_frame_item, text="Shares: waiting...",
-                                      font=(base_font[0], 12, 'normal'), foreground='#6633cc')
+                                      font=(base_font[0], 14, 'normal'), foreground='#6633cc')
             else:
                 shares_label = ttk.Label(shares_frame_item, text="Shares: waiting...",
-                                      font=(base_font[0], 14, 'normal'), foreground='#9370DB')
+                                      font=(base_font[0], 16, 'normal'), foreground='#9370DB')
             shares_label.pack()
             setattr(self, shares_attr, shares_label)
 
@@ -816,12 +816,12 @@ class CryptoTrader:
         content_height = scrollable_frame.winfo_reqheight()
         
         # 计算并设置窗口的初始大小
-        final_width = 470 if platform.system() != 'Darwin' else 470
+        final_width = 460 if platform.system() != 'Darwin' else 460
         # 高度自适应，但有最小和最大值
         final_height = max(400, min(content_height + 20, 800))
 
         self.root.geometry(f'{final_width}x{final_height}+0+0')
-        self.root.minsize(470 if platform.system() != 'Darwin' else 470, 1050)
+        self.root.minsize(460 if platform.system() != 'Darwin' else 460, 1000)
         
         # 调整LXDE下的DPI设置以改善显示
         if platform.system() != 'Darwin':
@@ -3764,7 +3764,7 @@ class CryptoTrader:
             try:
                 hostname = socket.gethostname()
                 sender = 'huacaihuijin@126.com'
-                receiver = 'huacaihuijin@126.com'
+                receiver = 'xiancai_wu@icloud.com'
                 app_password = 'PUaRF5FKeKJDrYH7'  # 有效期 180 天，请及时更新，下次到期日 2025-11-29
                 
                 # 获取交易币对信息
