@@ -405,7 +405,7 @@ class CryptoTrader:
             
             # Linux下简化标签
             label_mapping = {
-                "⚠️ 配置设置": "          娟娟细流,终入大海! 宁静致远,财富自由!",
+                "⚠️ 配置设置": "                     娟娟细流,终入大海! 宁静致远,财富自由!",
                 "🌐 Website Monitoring": "Website Monitoring",
                 "🎮 Control Panel": "Control Panel",
                 "📊 Trading Information": "Trading Information",
@@ -428,7 +428,7 @@ class CryptoTrader:
         # 金额设置框架
         amount_settings_frame = ttk.LabelFrame(
             scrollable_frame, 
-            text=get_label_text("             娟娟细流,终入大海! 宁静致远,财富自由!", is_mac), 
+            text=get_label_text("                    娟娟细流,终入大海! 宁静致远,财富自由!", is_mac), 
             padding=(10, 8), 
             style='Warning.TLabelframe'
         )
@@ -914,7 +914,7 @@ class CryptoTrader:
         self.set_amount_button['state'] = 'normal'
 
         # 检查是否登录
-        self.login_check_timer = self.root.after(2000, self.start_login_monitoring)
+        self.login_check_timer = self.root.after(4000, self.start_login_monitoring)
 
         # 启动URL监控
         self.url_check_timer = self.root.after(10000, self.enable_url_monitoring)
@@ -1006,20 +1006,200 @@ class CryptoTrader:
                 
         except Exception as e:
             error_msg = f"浏览器启动或页面加载失败: {str(e)}"
-            self.logger.error(error_msg)
-            self._show_error_and_reset(error_msg)
 
-    def _show_error_and_reset(self, error_msg):
-        """显示错误并重置按钮状态"""
-        # 用after方法确保在线程中执行GUI操作
-        # 在尝试显示消息框之前，检查Tkinter主窗口是否仍然存在
-        if self.root and self.root.winfo_exists():
-            self.root.after(0, lambda: messagebox.showerror("错误", error_msg))
-            self.root.after(0, lambda: self.start_button.config(state='normal'))
-        else:
-            # 如果主窗口不存在，则直接记录错误到日志
-            self.logger.error(f"GUI主窗口已销毁,无法显示错误消息: {error_msg}")
-        self.running = False
+    def restart_browser(self, force_restart=True):
+        """统一的浏览器重启/重连函数
+        Args:
+            force_restart: True=强制重启Chrome进程,False=尝试重连现有进程
+        Returns:
+            bool: 重启是否成功
+        """
+        # 检查是否已在重启中
+        with self.restart_lock:
+            if self.is_restarting:
+                self.logger.info("浏览器正在重启中，跳过重复重启")
+                return True
+            self.is_restarting = True
+
+        self._send_chrome_alert_email()
+        try:
+            self.logger.info(f"🔄 正在{'重启' if force_restart else '重连'}浏览器...")
+            
+            # 1. 清理现有连接
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
+                self.driver = None
+            
+            # 2. 如果需要强制重启，启动新的Chrome进程
+            if force_restart:
+                try:
+                    # 根据操作系统选择启动脚本
+                    script_path = ('start_chrome_macos.sh' if platform.system() == 'Darwin' 
+                                else 'start_chrome_aliyun.sh')
+                    script_path = os.path.abspath(script_path)
+                    
+                    # 检查脚本是否存在
+                    if not os.path.exists(script_path):
+                        raise FileNotFoundError(f"启动脚本不存在: {script_path}")
+                    
+                    # 等待Chrome调试端口可用
+                    self._wait_for_chrome_port(max_wait_time=30, wait_interval=1)
+                    
+                except Exception as e:
+                    self.logger.error(f"启动Chrome失败: {e}")
+                    return False
+            
+            # 3. 重新连接浏览器（带重试机制）
+            success = self._reconnect_browser(max_retries=3)
+            if success:
+                # 连接成功后，重置监控线程
+                self._restore_monitoring_state()
+                return True
+            else:
+                return False
+            
+        except Exception as e:
+            self.logger.error(f"浏览器重启失败: {e}")
+            return False
+        finally:
+            with self.restart_lock:
+                self.is_restarting = False
+
+    def _wait_for_chrome_port(self, max_wait_time=30, wait_interval=1):
+        """等待Chrome调试端口可用"""
+        for wait_time in range(0, max_wait_time, wait_interval):
+            time.sleep(wait_interval)
+            try:
+                # 检查调试端口是否可用
+                import requests
+                response = requests.get('http://127.0.0.1:9222/json', timeout=2)
+                if response.status_code == 200:
+                    self.logger.info(f"✅ Chrome浏览器已重新启动,调试端口可用,等待{wait_time+1}秒")
+                    return True
+            except:
+                continue
+        raise Exception("Chrome调试端口在30秒内未能启动")
+        
+    def _reconnect_browser(self, max_retries=3):
+        """尝试重新连接到浏览器实例"""
+        for attempt in range(max_retries):
+            try:
+                chrome_options = Options()
+                chrome_options.debugger_address = "127.0.0.1:9222"
+                chrome_options.add_argument('--disable-dev-shm-usage')
+                
+                # Linux特定配置
+                if platform.system() == 'Linux':
+                    # 添加Linux系统下的优化参数
+                    chrome_options.add_argument('--no-sandbox')
+                    chrome_options.add_argument('--disable-gpu')
+                    chrome_options.add_argument('--disable-software-rasterizer')
+                    chrome_options.add_argument('--disable-background-networking')
+                    chrome_options.add_argument('--disable-default-apps')
+                    chrome_options.add_argument('--disable-extensions')
+                    chrome_options.add_argument('--disable-sync')
+                    chrome_options.add_argument('--metrics-recording-only')
+                    chrome_options.add_argument('--no-first-run')
+                    chrome_options.add_argument('--disable-translate')
+                    chrome_options.add_argument('--disable-background-timer-throttling')
+                    chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+                    chrome_options.add_argument('--disable-renderer-backgrounding')
+                    chrome_options.add_argument('--disable-features=TranslateUI,BlinkGenPropertyTrees,SitePerProcess,IsolateOrigins')
+                    chrome_options.add_argument('--noerrdialogs')
+                
+                self.driver = webdriver.Chrome(options=chrome_options)
+                
+                # 验证连接
+                self.driver.execute_script("return navigator.userAgent")
+                
+                # 加载目标URL
+                target_url = self.url_entry.get().strip()
+                if target_url:
+                    self.driver.get(target_url)
+                    WebDriverWait(self.driver, 15).until(
+                        lambda d: d.execute_script('return document.readyState') == 'complete'
+                    )
+                    self.logger.info(f"✅ 成功加载页面: {target_url}")
+                
+                self.logger.info("✅ 浏览器连接成功")
+                return True
+                
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"连接失败 ({attempt+1}/{max_retries}),2秒后重试: {e}")
+                    time.sleep(2)
+                else:
+                    self.logger.error(f"浏览器连接最终失败: {e}")
+                    return False
+        return False
+
+    def _restore_monitoring_state(self):
+        """恢复监控状态 - 重新同步监控逻辑，确保所有监控功能正常工作"""
+        try:
+            self.logger.info("🔄 恢复监控状态...")
+            
+            # 确保运行状态正确
+            self.running = True
+            
+            # 定义监控定时器重置函数
+            def reset_timer(timer_attr, start_func):
+                if hasattr(self, timer_attr) and getattr(self, timer_attr):
+                    self.root.after_cancel(getattr(self, timer_attr))
+                start_func()
+            
+            # 重启关键监控功能
+            monitors = [
+                ('login_check_timer', self.start_login_monitoring),
+                ('url_check_timer', self.enable_url_monitoring),
+                ('refresh_page_timer', self.enable_refresh_page),
+                ('monitor_xpath_timer', self.monitor_xpath_elements),
+                ('comparison_binance_price_timer', self.comparison_binance_price),
+                ('schedule_auto_find_coin_timer', self.schedule_auto_find_coin)
+            ]
+            
+            # 重置各监控定时器
+            for timer_attr, start_func in monitors:
+                reset_timer(timer_attr, start_func)
+            
+            # 智能恢复时间敏感类定时器
+            current_time = datetime.now()
+            
+            # 1. 计算到下一个零点的时间差
+            next_zero_time = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            if current_time >= next_zero_time:
+                next_zero_time += timedelta(days=1)
+            
+            seconds_until_next_run = int((next_zero_time - current_time).total_seconds() * 1000)  # 转换为毫秒
+            
+            # 只在合理的时间范围内恢复零点价格定时器
+            if seconds_until_next_run > 0:
+                self.get_binance_zero_time_price_timer = self.root.after(
+                    seconds_until_next_run, 
+                    self.get_binance_zero_time_price
+                )
+                self.logger.info(f"✅ 恢复零点价格定时器，{round(seconds_until_next_run / 3600000, 2)} 小时后执行")
+            
+            # 2. 计算到23:59:30的时间差（零点现金监控）
+            next_cash_time = current_time.replace(hour=23, minute=59, second=30, microsecond=0)
+            if current_time >= next_cash_time:
+                next_cash_time += timedelta(days=1)
+            
+            seconds_until_cash_run = int((next_cash_time - current_time).total_seconds() * 1000)
+            
+            if seconds_until_cash_run > 0:
+                self.get_zero_time_cash_timer = self.root.after(
+                    seconds_until_cash_run, 
+                    self.get_zero_time_cash
+                )
+                self.logger.info(f"✅ 恢复零点现金定时器，{round(seconds_until_cash_run / 3600000, 2)} 小时后执行")
+            
+            self.logger.info("✅ 监控状态恢复完成")
+            
+        except Exception as e:
+            self.logger.error(f"恢复监控状态失败: {e}")
 
     def monitor_prices(self):
         """检查价格变化"""
@@ -1205,8 +1385,8 @@ class CryptoTrader:
                 cash_text = cash_element.text if cash_element else "Cash: $0.00"
             
             # 更新GUI
-            self.portfolio_label.config(text=portfolio_text)
-            self.cash_label.config(text=cash_text)
+            self.portfolio_label.config(text=f"📊Portfolio: {portfolio_text}")
+            self.cash_label.config(text=f"💰Cash: {cash_text}")
             
             # 提取数值
             portfolio_match = re.search(r'\$?([\d,]+\.?\d*)', portfolio_text)
@@ -1265,205 +1445,6 @@ class CryptoTrader:
                 
         except Exception as e:
             pass
-
-    def restart_browser(self, force_restart=True):
-        """统一的浏览器重启/重连函数
-        Args:
-            force_restart: True=强制重启Chrome进程,False=尝试重连现有进程
-        Returns:
-            bool: 重启是否成功
-        """
-        # 检查是否已在重启中
-        with self.restart_lock:
-            if self.is_restarting:
-                self.logger.info("浏览器正在重启中，跳过重复重启")
-                return True
-            self.is_restarting = True
-
-        self._send_chrome_alert_email()
-        try:
-            self.logger.info(f"🔄 正在{'重启' if force_restart else '重连'}浏览器...")
-            
-            # 1. 清理现有连接
-            if self.driver:
-                try:
-                    self.driver.quit()
-                except Exception:
-                    pass
-                self.driver = None
-            
-            # 2. 如果需要强制重启，启动新的Chrome进程
-            if force_restart:
-                try:
-                    # 根据操作系统选择启动脚本
-                    script_path = ('start_chrome_macos.sh' if platform.system() == 'Darwin' 
-                                else 'start_chrome_aliyun.sh')
-                    script_path = os.path.abspath(script_path)
-                    
-                    # 检查脚本是否存在
-                    if not os.path.exists(script_path):
-                        raise FileNotFoundError(f"启动脚本不存在: {script_path}")
-                    
-                    # 启动Chrome进程（异步）
-                    process = subprocess.Popen(['bash', script_path], 
-                                             stdout=subprocess.PIPE, 
-                                             stderr=subprocess.PIPE)
-                    
-                    # 等待Chrome调试端口可用
-                    self._wait_for_chrome_port(max_wait_time=30, wait_interval=1)
-                    
-                except Exception as e:
-                    self.logger.error(f"启动Chrome失败: {e}")
-                    return False
-            
-            # 3. 重新连接浏览器（带重试机制）
-            success = self._reconnect_browser(max_retries=3)
-            if success:
-                # 连接成功后，重置监控线程
-                self._restore_monitoring_state()
-                return True
-            else:
-                return False
-            
-        except Exception as e:
-            self.logger.error(f"浏览器重启失败: {e}")
-            return False
-        finally:
-            with self.restart_lock:
-                self.is_restarting = False
-    
-    def _wait_for_chrome_port(self, max_wait_time=30, wait_interval=1):
-        """等待Chrome调试端口可用"""
-        for wait_time in range(0, max_wait_time, wait_interval):
-            time.sleep(wait_interval)
-            try:
-                # 检查调试端口是否可用
-                import requests
-                response = requests.get('http://127.0.0.1:9222/json', timeout=2)
-                if response.status_code == 200:
-                    self.logger.info(f"✅ Chrome浏览器已重新启动,调试端口可用,等待{wait_time+1}秒")
-                    return True
-            except:
-                continue
-        raise Exception("Chrome调试端口在30秒内未能启动")
-        
-    def _reconnect_browser(self, max_retries=3):
-        """尝试重新连接到浏览器实例"""
-        for attempt in range(max_retries):
-            try:
-                chrome_options = Options()
-                chrome_options.debugger_address = "127.0.0.1:9222"
-                chrome_options.add_argument('--disable-dev-shm-usage')
-                
-                # Linux特定配置
-                if platform.system() == 'Linux':
-                    # 添加Linux系统下的优化参数
-                    chrome_options.add_argument('--no-sandbox')
-                    chrome_options.add_argument('--disable-gpu')
-                    chrome_options.add_argument('--disable-software-rasterizer')
-                    chrome_options.add_argument('--disable-background-networking')
-                    chrome_options.add_argument('--disable-default-apps')
-                    chrome_options.add_argument('--disable-extensions')
-                    chrome_options.add_argument('--disable-sync')
-                    chrome_options.add_argument('--metrics-recording-only')
-                    chrome_options.add_argument('--no-first-run')
-                    chrome_options.add_argument('--disable-translate')
-                    chrome_options.add_argument('--disable-background-timer-throttling')
-                    chrome_options.add_argument('--disable-backgrounding-occluded-windows')
-                    chrome_options.add_argument('--disable-renderer-backgrounding')
-                    chrome_options.add_argument('--disable-features=TranslateUI,BlinkGenPropertyTrees,SitePerProcess,IsolateOrigins')
-                    chrome_options.add_argument('--noerrdialogs')
-                
-                self.driver = webdriver.Chrome(options=chrome_options)
-                
-                # 验证连接
-                self.driver.execute_script("return navigator.userAgent")
-                
-                # 加载目标URL
-                target_url = self.url_entry.get().strip()
-                if target_url:
-                    self.driver.get(target_url)
-                    WebDriverWait(self.driver, 15).until(
-                        lambda d: d.execute_script('return document.readyState') == 'complete'
-                    )
-                    self.logger.info(f"✅ 成功加载页面: {target_url}")
-                
-                self.logger.info("✅ 浏览器连接成功")
-                return True
-                
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    self.logger.warning(f"连接失败 ({attempt+1}/{max_retries}),2秒后重试: {e}")
-                    time.sleep(2)
-                else:
-                    self.logger.error(f"浏览器连接最终失败: {e}")
-                    return False
-        return False
-
-    def _restore_monitoring_state(self):
-        """恢复监控状态 - 重新同步监控逻辑，确保所有监控功能正常工作"""
-        try:
-            self.logger.info("🔄 恢复监控状态...")
-            
-            # 确保运行状态正确
-            self.running = True
-            
-            # 定义监控定时器重置函数
-            def reset_timer(timer_attr, start_func):
-                if hasattr(self, timer_attr) and getattr(self, timer_attr):
-                    self.root.after_cancel(getattr(self, timer_attr))
-                start_func()
-            
-            # 重启关键监控功能
-            monitors = [
-                ('login_check_timer', self.start_login_monitoring),
-                ('url_check_timer', self.enable_url_monitoring),
-                ('refresh_page_timer', self.enable_refresh_page),
-                ('monitor_xpath_timer', self.monitor_xpath_elements),
-                ('comparison_binance_price_timer', self.comparison_binance_price),
-                ('schedule_auto_find_coin_timer', self.schedule_auto_find_coin)
-            ]
-            
-            # 重置各监控定时器
-            for timer_attr, start_func in monitors:
-                reset_timer(timer_attr, start_func)
-            
-            # 智能恢复时间敏感类定时器
-            current_time = datetime.now()
-            
-            # 1. 计算到下一个零点的时间差
-            next_zero_time = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
-            if current_time >= next_zero_time:
-                next_zero_time += timedelta(days=1)
-            
-            seconds_until_next_run = int((next_zero_time - current_time).total_seconds() * 1000)  # 转换为毫秒
-            
-            # 只在合理的时间范围内恢复零点价格定时器
-            if seconds_until_next_run > 0:
-                self.get_binance_zero_time_price_timer = self.root.after(
-                    seconds_until_next_run, 
-                    self.get_binance_zero_time_price
-                )
-                self.logger.info(f"✅ 恢复零点价格定时器，{round(seconds_until_next_run / 3600000, 2)} 小时后执行")
-            
-            # 2. 计算到23:59:30的时间差（零点现金监控）
-            next_cash_time = current_time.replace(hour=23, minute=59, second=30, microsecond=0)
-            if current_time >= next_cash_time:
-                next_cash_time += timedelta(days=1)
-            
-            seconds_until_cash_run = int((next_cash_time - current_time).total_seconds() * 1000)
-            
-            if seconds_until_cash_run > 0:
-                self.get_zero_time_cash_timer = self.root.after(
-                    seconds_until_cash_run, 
-                    self.get_zero_time_cash
-                )
-                self.logger.info(f"✅ 恢复零点现金定时器，{round(seconds_until_cash_run / 3600000, 2)} 小时后执行")
-            
-            self.logger.info("✅ 监控状态恢复完成")
-            
-        except Exception as e:
-            self.logger.error(f"恢复监控状态失败: {e}")
 
     def First_trade(self, asks_price_raw, bids_price_raw, asks_shares, bids_shares):
         """第一次交易价格设置为 0.52 买入"""
@@ -2522,382 +2503,11 @@ class CryptoTrader:
                 return self._execute_buy_trade(is_yes_direction, trade_num, retry_count - 1)
             return False
     
-    def click_buy_confirm_button(self):
-        try:
-            buy_confirm_button = self.driver.find_element(By.XPATH, XPathConfig.BUY_CONFIRM_BUTTON[0])
-            buy_confirm_button.click()
-        except NoSuchElementException:
-            
-            buy_confirm_button = self._find_element_with_retry(
-                XPathConfig.BUY_CONFIRM_BUTTON,
-                timeout=3,
-                silent=True
-            )
-            buy_confirm_button.click()
-    
-    def click_position_sell_no(self):
-        """点击 Positions-Sell-No 按钮"""
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-
-            # 等待页面加载完成
-            WebDriverWait(self.driver, 10).until(
-                lambda driver: driver.execute_script('return document.readyState') == 'complete'
-            )
-            
-            position_value = self.find_position_label_yes()
-            # position_value 的值是true 或 false
-            # 根据position_value的值决定点击哪个按钮
-            if position_value:
-                # 如果第一行是Up，点击第二的按钮
-                try:
-                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_NO_BUTTON[0])
-                except NoSuchElementException:
-                    button = self._find_element_with_retry(
-                        XPathConfig.POSITION_SELL_NO_BUTTON,
-                        timeout=3,
-                        silent=True
-                    )
-            else:
-                # 如果第一行不存在或不是Up，使用默认的第一行按钮
-                try:
-                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_BUTTON[0])
-                except NoSuchElementException:
-                    button = self._find_element_with_retry(
-                        XPathConfig.POSITION_SELL_BUTTON,
-                        timeout=3,
-                        silent=True
-                    )
-            # 执行点击
-            self.driver.execute_script("arguments[0].click();", button)
-            
-        except Exception as e:
-            error_msg = f"点击 Positions-Sell-No 按钮失败: {str(e)}"
-            self.logger.error(error_msg)
-            
-
-    def click_position_sell_yes(self):
-        """点击 Positions-Sell-Yes 按钮"""
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-
-            # 等待页面加载完成
-            WebDriverWait(self.driver, 10).until(
-                lambda driver: driver.execute_script('return document.readyState') == 'complete'
-            )
-            
-            position_value = self.find_position_label_no()
-            
-            # 根据position_value的值决定点击哪个按钮
-            
-            if position_value:
-                # 如果第二行是No，点击第一行YES 的 SELL的按钮
-                try:
-                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_YES_BUTTON[0])
-                except NoSuchElementException:
-                    button = self._find_element_with_retry(
-                        XPathConfig.POSITION_SELL_YES_BUTTON,
-                        timeout=3,
-                        silent=True
-                    )
-            else:
-                # 如果第二行不存在或不是No，使用默认的第一行按钮
-                try:
-                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_BUTTON[0])
-                except NoSuchElementException:
-                    button = self._find_element_with_retry(
-                        XPathConfig.POSITION_SELL_BUTTON,
-                        timeout=3,
-                        silent=True
-                    )
-            # 执行点击
-            self.driver.execute_script("arguments[0].click();", button)
-             
-        except Exception as e:
-            error_msg = f"点击 Positions-Sell-Yes 按钮失败: {str(e)}"
-            self.logger.error(error_msg)
-            
-
-    def click_sell_confirm_button(self):
-        """点击sell-卖出按钮"""
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-            # 点击Sell-卖出按钮
-            try:
-                sell_confirm_button = self.driver.find_element(By.XPATH, XPathConfig.SELL_CONFIRM_BUTTON[0])
-            except NoSuchElementException:
-                sell_confirm_button = self._find_element_with_retry(
-                    XPathConfig.SELL_CONFIRM_BUTTON,
-                    timeout=3,
-                    silent=True
-                )
-            sell_confirm_button.click()
-            
-        except Exception as e:
-            error_msg = f"卖出操作失败: {str(e)}"
-            self.logger.error(error_msg)
-
-    def click_buy(self):
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-            try:
-                button = self.driver.find_element(By.XPATH, XPathConfig.BUY_BUTTON[0])
-            except NoSuchElementException:
-                button = self._find_element_with_retry(
-                    XPathConfig.BUY_BUTTON,
-                    timeout=3,
-                    silent=True
-                )
-            button.click()
-            
-        except Exception as e:
-            self.logger.error(f"点击 Buy 按钮失败: {str(e)}")
-
-    def click_buy_yes(self):
-        """点击 Buy-Yes 按钮"""
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-            
-            try:
-                button = self.driver.find_element(By.XPATH, XPathConfig.BUY_YES_BUTTON[0])
-            except NoSuchElementException:
-                button = self._find_element_with_retry(
-                    XPathConfig.BUY_YES_BUTTON,
-                    timeout=3,
-                    silent=True
-                )
-            button.click()
-            
-        except Exception as e:
-            self.logger.error(f"点击 Buy-Yes 按钮失败: {str(e)}")
-
-    def click_buy_no(self):
-        """点击 Buy-No 按钮"""
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-            try:
-                button = self.driver.find_element(By.XPATH, XPathConfig.BUY_NO_BUTTON[0])
-            except NoSuchElementException:
-                button = self._find_element_with_retry(
-                    XPathConfig.BUY_NO_BUTTON,
-                    timeout=3,
-                    silent=True
-                )
-            button.click()
-            
-        except Exception as e:
-            self.logger.error(f"点击 Buy-No 按钮失败: {str(e)}")
-
-    def click_amount(self, event=None):
-        """点击 Amount 按钮并输入数量"""
-        try:
-            if not self.driver and not self.is_restarting:
-                self.restart_browser(force_restart=True)
-            
-            # 获取触发事件的按钮
-            button = event.widget if event else self.amount_button
-            button_text = button.cget("text")
-
-            # 找到输入框
-            try:
-                amount_input = self.driver.find_element(By.XPATH, XPathConfig.AMOUNT_INPUT[0])
-            except NoSuchElementException:
-                amount_input = self._find_element_with_retry(
-                    XPathConfig.AMOUNT_INPUT,
-                    timeout=3,
-                    silent=True
-                )
-
-            # 清空输入框
-            amount_input.clear()
-            # 根据按钮文本获取对应的金额
-            if button_text == "Amount-Y1":
-                amount = self.yes1_amount_entry.get()
-            elif button_text == "Amount-Y2":
-                yes2_amount_entry = self.yes_frame.grid_slaves(row=3, column=1)[0]
-                amount = yes2_amount_entry.get()
-            elif button_text == "Amount-Y3":
-                yes3_amount_entry = self.yes_frame.grid_slaves(row=5, column=1)[0]
-                amount = yes3_amount_entry.get()
-            elif button_text == "Amount-Y4":
-                yes4_amount_entry = self.yes_frame.grid_slaves(row=7, column=1)[0]
-                amount = yes4_amount_entry.get()
-            
-            # No 按钮
-            elif button_text == "Amount-N1":
-                no1_amount_entry = self.no_frame.grid_slaves(row=1, column=1)[0]
-                amount = no1_amount_entry.get()
-            elif button_text == "Amount-N2":
-
-                no2_amount_entry = self.no_frame.grid_slaves(row=3, column=1)[0]
-                amount = no2_amount_entry.get()
-            elif button_text == "Amount-N3":
-                no3_amount_entry = self.no_frame.grid_slaves(row=5, column=1)[0]
-                amount = no3_amount_entry.get()
-            elif button_text == "Amount-N4":
-                no4_amount_entry = self.no_frame.grid_slaves(row=7, column=1)[0]
-                amount = no4_amount_entry.get()
-            else:
-                amount = "0"
-            # 输入金额
-            amount_input.send_keys(str(amount))
-              
-        except Exception as e:
-            self.logger.error(f"Amount操作失败: {str(e)}")
-
-    def position_yes_cash(self):
-        """获取当前持仓YES的金额"""
-        try:
-            yes_element = self.driver.find_element(By.XPATH, XPathConfig.HISTORY[0])
-        except NoSuchElementException:
-            yes_element = self._find_element_with_retry(
-                XPathConfig.HISTORY,
-                timeout=3,
-                silent=True
-            )
-        text = yes_element.text
-        amount_match = re.search(r'\$(\d+\.?\d*)', text)  # 匹配 $数字 格式
-        yes_value = float(amount_match.group(1)) if amount_match else 0
-        self.logger.info(f"✅ 当前持仓YES的金额: \033[32m{yes_value}\033[0m")
-        return yes_value
-    
-    def position_no_cash(self):
-        """获取当前持仓NO的金额"""
-        try:
-            no_element = self.driver.find_element(By.XPATH, XPathConfig.HISTORY[0])
-        except NoSuchElementException:
-            no_element = self._find_element_with_retry(
-                XPathConfig.HISTORY,
-                timeout=3,
-                silent=True
-            )
-        text = no_element.text
-        amount_match = re.search(r'\$(\d+\.?\d*)', text)  # 匹配 $数字 格式
-        no_value = float(amount_match.group(1)) if amount_match else 0
-        self.logger.info(f"✅ 当前持仓NO的金额: \033[32m{no_value}\033[0m")
-        return no_value
-
-    def set_default_price(self, price):
-        """设置默认目标价格"""
-        try:
-            self.default_target_price = float(price)
-            self.yes1_price_entry.delete(0, tk.END)
-            self.yes1_price_entry.insert(0, str(self.default_target_price))
-            self.no1_price_entry.delete(0, tk.END)
-            self.no1_price_entry.insert(0, str(self.default_target_price))
-            self.logger.info(f"✅ 默认目标价格已更新为: \033[32m{price}\033[0m")
-        except ValueError:
-            self.logger.error("价格设置无效，请输入有效数字")
-
-    def retry_operation(self, operation, *args, **kwargs):
-        """通用重试机制"""
-        for attempt in range(self.retry_count):
-            try:
-                return operation(*args, **kwargs)
-            except Exception as e:
-                self.logger.warning(f"{operation.__name__} 失败，尝试 {attempt + 1}/{self.retry_count}: {str(e)}")
-                if attempt < self.retry_count - 1:
-                    time.sleep(self.retry_interval)
-                else:
-                    raise
-
-    def find_position_label_yes(self):
-        """查找Yes持仓标签"""
-        max_retries = 2
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
-            try:
-                if not self.driver and not self.is_restarting:
-                    self.restart_browser(force_restart=True)
-                    
-                # 等待页面加载完成
-                WebDriverWait(self.driver, 10).until(
-                    lambda driver: driver.execute_script('return document.readyState') == 'complete'
-                )
-                
-                # 尝试获取Up标签
-                try:
-                    position_label_up = None
-                    position_label_up = self.driver.find_element(By.XPATH, XPathConfig.POSITION_UP_LABEL[0])
-                    if position_label_up is not None and position_label_up:
-                        self.logger.info(f"✅ 找到了Up持仓标签: \033[32m{position_label_up.text}\033[0m")
-                        return True
-                    else:
-                        self.logger.info("❌ USE FIND-element,未找到Up持仓标签")
-                        return False
-                except NoSuchElementException:
-                    position_label_up = self._find_element_with_retry(XPathConfig.POSITION_UP_LABEL, timeout=3, silent=True)
-                    if position_label_up is not None and position_label_up:
-                        self.logger.info(f"✅ 找到了Up持仓标签: \033[32m{position_label_up.text}\033[0m")
-                        return True
-                    else:
-                        self.logger.info("❌ use with-retry,未找到Up持仓标签")
-                        return False
-                         
-            except TimeoutException:
-                self.logger.debug(f"第{attempt + 1}次尝试未找到UP标签,正常情况!")
-            
-            if attempt < max_retries - 1:
-                self.logger.info(f"等待{retry_delay}秒后重试...")
-                time.sleep(retry_delay)
-                self.driver.refresh()
-        return False
-        
-    def find_position_label_no(self):
-        """查找Down持仓标签"""
-        max_retries = 2
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
-            try:
-                if not self.driver and not self.is_restarting:
-                    self.restart_browser(force_restart=True)
-                    
-                # 等待页面加载完成
-                WebDriverWait(self.driver, 10).until(
-                    lambda driver: driver.execute_script('return document.readyState') == 'complete'
-                )
-                
-                # 尝试获取Down标签
-                try:
-                    position_label_down = None
-                    position_label_down = self.driver.find_element(By.XPATH, XPathConfig.POSITION_DOWN_LABEL[0])
-                    if position_label_down is not None and position_label_down:
-                        self.logger.info(f"✅ use find-element,找到了Down持仓标签: \033[32m{position_label_down.text}\033[0m")
-                        return True
-                    else:
-                        self.logger.info("❌ use find-element,未找到Down持仓标签")
-                        return False
-                except NoSuchElementException:
-                    position_label_down = self._find_element_with_retry(XPathConfig.POSITION_DOWN_LABEL, timeout=3, silent=True)
-                    if position_label_down is not None and position_label_down:
-                        self.logger.info(f"✅ use with-retry,找到了Down持仓标签: \033[32m{position_label_down.text}\033[0m")
-                        return True
-                    else:
-                        self.logger.info("❌ use with-retry,未找到Down持仓标签")
-                        return False
-                               
-            except TimeoutException:
-                self.logger.warning(f"第{attempt + 1}次尝试未找到Down标签")
-                
-            if attempt < max_retries - 1:
-                self.logger.info(f"等待{retry_delay}秒后重试...")
-                time.sleep(retry_delay)
-                self.driver.refresh()
-        return False
-
     def schedule_auto_find_coin(self):
         """安排每天3点30分执行自动找币"""
         now = datetime.now()
         # 计算下一个3点2分的时间
-        next_run = now.replace(hour=20, minute=31, second=0, microsecond=0)
+        next_run = now.replace(hour=3, minute=30, second=0, microsecond=0)
         if now >= next_run:
             next_run += timedelta(days=1)
         
@@ -3734,26 +3344,136 @@ class CryptoTrader:
         except Exception as e:
             self.logger.error(f"启用页面刷新失败: {str(e)}")
 
-    def close_windows(self):
-        """关闭多余窗口"""
-        # 检查并关闭多余的窗口，只保留一个
-        all_handles = self.driver.window_handles
+    def position_yes_cash(self):
+        """获取当前持仓YES的金额"""
+        try:
+            yes_element = self.driver.find_element(By.XPATH, XPathConfig.HISTORY[0])
+        except NoSuchElementException:
+            yes_element = self._find_element_with_retry(
+                XPathConfig.HISTORY,
+                timeout=3,
+                silent=True
+            )
+        text = yes_element.text
+        amount_match = re.search(r'\$(\d+\.?\d*)', text)  # 匹配 $数字 格式
+        yes_value = float(amount_match.group(1)) if amount_match else 0
+        self.logger.info(f"✅ 当前持仓YES的金额: \033[32m{yes_value}\033[0m")
+        return yes_value
+    
+    def position_no_cash(self):
+        """获取当前持仓NO的金额"""
+        try:
+            no_element = self.driver.find_element(By.XPATH, XPathConfig.HISTORY[0])
+        except NoSuchElementException:
+            no_element = self._find_element_with_retry(
+                XPathConfig.HISTORY,
+                timeout=3,
+                silent=True
+            )
+        text = no_element.text
+        amount_match = re.search(r'\$(\d+\.?\d*)', text)  # 匹配 $数字 格式
+        no_value = float(amount_match.group(1)) if amount_match else 0
+        self.logger.info(f"✅ 当前持仓NO的金额: \033[32m{no_value}\033[0m")
+        return no_value
+
+    def set_default_price(self, price):
+        """设置默认目标价格"""
+        try:
+            self.default_target_price = float(price)
+            self.yes1_price_entry.delete(0, tk.END)
+            self.yes1_price_entry.insert(0, str(self.default_target_price))
+            self.no1_price_entry.delete(0, tk.END)
+            self.no1_price_entry.insert(0, str(self.default_target_price))
+            self.logger.info(f"✅ 默认目标价格已更新为: \033[32m{price}\033[0m")
+        except ValueError:
+            self.logger.error("价格设置无效，请输入有效数字")
+
+    def find_position_label_yes(self):
+        """查找Yes持仓标签"""
+        max_retries = 2
+        retry_delay = 2
         
-        if len(all_handles) > 1:
-            # 保留最后一个窗口，关闭其他所有窗口
-            current_handle = all_handles[-1]  # 使用最后一个窗口
+        for attempt in range(max_retries):
+            try:
+                if not self.driver and not self.is_restarting:
+                    self.restart_browser(force_restart=True)
+                    
+                # 等待页面加载完成
+                WebDriverWait(self.driver, 10).until(
+                    lambda driver: driver.execute_script('return document.readyState') == 'complete'
+                )
+                
+                # 尝试获取Up标签
+                try:
+                    position_label_up = None
+                    position_label_up = self.driver.find_element(By.XPATH, XPathConfig.POSITION_UP_LABEL[0])
+                    if position_label_up is not None and position_label_up:
+                        self.logger.info(f"✅ 找到了Up持仓标签: \033[32m{position_label_up.text}\033[0m")
+                        return True
+                    else:
+                        self.logger.info("❌ USE FIND-element,未找到Up持仓标签")
+                        return False
+                except NoSuchElementException:
+                    position_label_up = self._find_element_with_retry(XPathConfig.POSITION_UP_LABEL, timeout=3, silent=True)
+                    if position_label_up is not None and position_label_up:
+                        self.logger.info(f"✅ 找到了Up持仓标签: \033[32m{position_label_up.text}\033[0m")
+                        return True
+                    else:
+                        self.logger.info("❌ use with-retry,未找到Up持仓标签")
+                        return False
+                         
+            except TimeoutException:
+                self.logger.debug(f"第{attempt + 1}次尝试未找到UP标签,正常情况!")
             
-            # 关闭除了最后一个窗口外的所有窗口
-            for handle in all_handles[:-1]:
-                self.driver.switch_to.window(handle)
-                self.driver.close()
-            
-            # 切换到保留的窗口
-            self.driver.switch_to.window(current_handle)
-            
-        else:
-            self.logger.warning("❗ 当前窗口数不足2个,无需切换")
-            
+            if attempt < max_retries - 1:
+                self.logger.info(f"等待{retry_delay}秒后重试...")
+                time.sleep(retry_delay)
+                self.driver.refresh()
+        return False
+        
+    def find_position_label_no(self):
+        """查找Down持仓标签"""
+        max_retries = 2
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                if not self.driver and not self.is_restarting:
+                    self.restart_browser(force_restart=True)
+                    
+                # 等待页面加载完成
+                WebDriverWait(self.driver, 10).until(
+                    lambda driver: driver.execute_script('return document.readyState') == 'complete'
+                )
+                
+                # 尝试获取Down标签
+                try:
+                    position_label_down = None
+                    position_label_down = self.driver.find_element(By.XPATH, XPathConfig.POSITION_DOWN_LABEL[0])
+                    if position_label_down is not None and position_label_down:
+                        self.logger.info(f"✅ use find-element,找到了Down持仓标签: \033[32m{position_label_down.text}\033[0m")
+                        return True
+                    else:
+                        self.logger.info("❌ use find-element,未找到Down持仓标签")
+                        return False
+                except NoSuchElementException:
+                    position_label_down = self._find_element_with_retry(XPathConfig.POSITION_DOWN_LABEL, timeout=3, silent=True)
+                    if position_label_down is not None and position_label_down:
+                        self.logger.info(f"✅ use with-retry,找到了Down持仓标签: \033[32m{position_label_down.text}\033[0m")
+                        return True
+                    else:
+                        self.logger.info("❌ use with-retry,未找到Down持仓标签")
+                        return False
+                               
+            except TimeoutException:
+                self.logger.warning(f"第{attempt + 1}次尝试未找到Down标签")
+                
+            if attempt < max_retries - 1:
+                self.logger.info(f"等待{retry_delay}秒后重试...")
+                time.sleep(retry_delay)
+                self.driver.refresh()
+        return False
+
     def reset_trade(self):
         """重置交易"""
         # 在所有操作完成后,重置交易
@@ -4058,6 +3778,267 @@ class CryptoTrader:
                     pass
             time.sleep(poll_frequency)
         return None
+
+    def close_windows(self):
+        """关闭多余窗口"""
+        # 检查并关闭多余的窗口，只保留一个
+        all_handles = self.driver.window_handles
+        
+        if len(all_handles) > 1:
+            # 保留最后一个窗口，关闭其他所有窗口
+            current_handle = all_handles[-1]  # 使用最后一个窗口
+            
+            # 关闭除了最后一个窗口外的所有窗口
+            for handle in all_handles[:-1]:
+                self.driver.switch_to.window(handle)
+                self.driver.close()
+            
+            # 切换到保留的窗口
+            self.driver.switch_to.window(current_handle)
+            
+        else:
+            self.logger.warning("❗ 当前窗口数不足2个,无需切换")
+
+    def retry_operation(self, operation, *args, **kwargs):
+        """通用重试机制"""
+        for attempt in range(self.retry_count):
+            try:
+                return operation(*args, **kwargs)
+            except Exception as e:
+                self.logger.warning(f"{operation.__name__} 失败，尝试 {attempt + 1}/{self.retry_count}: {str(e)}")
+                if attempt < self.retry_count - 1:
+                    time.sleep(self.retry_interval)
+                else:
+                    raise
+       
+    def click_buy_confirm_button(self):
+        try:
+            buy_confirm_button = self.driver.find_element(By.XPATH, XPathConfig.BUY_CONFIRM_BUTTON[0])
+            buy_confirm_button.click()
+        except NoSuchElementException:
+            
+            buy_confirm_button = self._find_element_with_retry(
+                XPathConfig.BUY_CONFIRM_BUTTON,
+                timeout=3,
+                silent=True
+            )
+            buy_confirm_button.click()
+    
+    def click_position_sell_no(self):
+        """点击 Positions-Sell-No 按钮"""
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+
+            # 等待页面加载完成
+            WebDriverWait(self.driver, 10).until(
+                lambda driver: driver.execute_script('return document.readyState') == 'complete'
+            )
+            
+            position_value = self.find_position_label_yes()
+            # position_value 的值是true 或 false
+            # 根据position_value的值决定点击哪个按钮
+            if position_value:
+                # 如果第一行是Up，点击第二的按钮
+                try:
+                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_NO_BUTTON[0])
+                except NoSuchElementException:
+                    button = self._find_element_with_retry(
+                        XPathConfig.POSITION_SELL_NO_BUTTON,
+                        timeout=3,
+                        silent=True
+                    )
+            else:
+                # 如果第一行不存在或不是Up，使用默认的第一行按钮
+                try:
+                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_BUTTON[0])
+                except NoSuchElementException:
+                    button = self._find_element_with_retry(
+                        XPathConfig.POSITION_SELL_BUTTON,
+                        timeout=3,
+                        silent=True
+                    )
+            # 执行点击
+            self.driver.execute_script("arguments[0].click();", button)
+            
+        except Exception as e:
+            error_msg = f"点击 Positions-Sell-No 按钮失败: {str(e)}"
+            self.logger.error(error_msg)
+            
+
+    def click_position_sell_yes(self):
+        """点击 Positions-Sell-Yes 按钮"""
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+
+            # 等待页面加载完成
+            WebDriverWait(self.driver, 10).until(
+                lambda driver: driver.execute_script('return document.readyState') == 'complete'
+            )
+            
+            position_value = self.find_position_label_no()
+            
+            # 根据position_value的值决定点击哪个按钮
+            
+            if position_value:
+                # 如果第二行是No，点击第一行YES 的 SELL的按钮
+                try:
+                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_YES_BUTTON[0])
+                except NoSuchElementException:
+                    button = self._find_element_with_retry(
+                        XPathConfig.POSITION_SELL_YES_BUTTON,
+                        timeout=3,
+                        silent=True
+                    )
+            else:
+                # 如果第二行不存在或不是No，使用默认的第一行按钮
+                try:
+                    button = self.driver.find_element(By.XPATH, XPathConfig.POSITION_SELL_BUTTON[0])
+                except NoSuchElementException:
+                    button = self._find_element_with_retry(
+                        XPathConfig.POSITION_SELL_BUTTON,
+                        timeout=3,
+                        silent=True
+                    )
+            # 执行点击
+            self.driver.execute_script("arguments[0].click();", button)
+             
+        except Exception as e:
+            error_msg = f"点击 Positions-Sell-Yes 按钮失败: {str(e)}"
+            self.logger.error(error_msg)
+            
+
+    def click_sell_confirm_button(self):
+        """点击sell-卖出按钮"""
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+            # 点击Sell-卖出按钮
+            try:
+                sell_confirm_button = self.driver.find_element(By.XPATH, XPathConfig.SELL_CONFIRM_BUTTON[0])
+            except NoSuchElementException:
+                sell_confirm_button = self._find_element_with_retry(
+                    XPathConfig.SELL_CONFIRM_BUTTON,
+                    timeout=3,
+                    silent=True
+                )
+            sell_confirm_button.click()
+            
+        except Exception as e:
+            error_msg = f"卖出操作失败: {str(e)}"
+            self.logger.error(error_msg)
+
+    def click_buy(self):
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+            try:
+                button = self.driver.find_element(By.XPATH, XPathConfig.BUY_BUTTON[0])
+            except NoSuchElementException:
+                button = self._find_element_with_retry(
+                    XPathConfig.BUY_BUTTON,
+                    timeout=3,
+                    silent=True
+                )
+            button.click()
+            
+        except Exception as e:
+            self.logger.error(f"点击 Buy 按钮失败: {str(e)}")
+
+    def click_buy_yes(self):
+        """点击 Buy-Yes 按钮"""
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+            
+            try:
+                button = self.driver.find_element(By.XPATH, XPathConfig.BUY_YES_BUTTON[0])
+            except NoSuchElementException:
+                button = self._find_element_with_retry(
+                    XPathConfig.BUY_YES_BUTTON,
+                    timeout=3,
+                    silent=True
+                )
+            button.click()
+            
+        except Exception as e:
+            self.logger.error(f"点击 Buy-Yes 按钮失败: {str(e)}")
+
+    def click_buy_no(self):
+        """点击 Buy-No 按钮"""
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+            try:
+                button = self.driver.find_element(By.XPATH, XPathConfig.BUY_NO_BUTTON[0])
+            except NoSuchElementException:
+                button = self._find_element_with_retry(
+                    XPathConfig.BUY_NO_BUTTON,
+                    timeout=3,
+                    silent=True
+                )
+            button.click()
+            
+        except Exception as e:
+            self.logger.error(f"点击 Buy-No 按钮失败: {str(e)}")
+
+    def click_amount(self, event=None):
+        """点击 Amount 按钮并输入数量"""
+        try:
+            if not self.driver and not self.is_restarting:
+                self.restart_browser(force_restart=True)
+            
+            # 获取触发事件的按钮
+            button = event.widget if event else self.amount_button
+            button_text = button.cget("text")
+
+            # 找到输入框
+            try:
+                amount_input = self.driver.find_element(By.XPATH, XPathConfig.AMOUNT_INPUT[0])
+            except NoSuchElementException:
+                amount_input = self._find_element_with_retry(
+                    XPathConfig.AMOUNT_INPUT,
+                    timeout=3,
+                    silent=True
+                )
+
+            # 清空输入框
+            amount_input.clear()
+            # 根据按钮文本获取对应的金额
+            if button_text == "Amount-Y1":
+                amount = self.yes1_amount_entry.get()
+            elif button_text == "Amount-Y2":
+                yes2_amount_entry = self.yes_frame.grid_slaves(row=3, column=1)[0]
+                amount = yes2_amount_entry.get()
+            elif button_text == "Amount-Y3":
+                yes3_amount_entry = self.yes_frame.grid_slaves(row=5, column=1)[0]
+                amount = yes3_amount_entry.get()
+            elif button_text == "Amount-Y4":
+                yes4_amount_entry = self.yes_frame.grid_slaves(row=7, column=1)[0]
+                amount = yes4_amount_entry.get()
+            
+            # No 按钮
+            elif button_text == "Amount-N1":
+                no1_amount_entry = self.no_frame.grid_slaves(row=1, column=1)[0]
+                amount = no1_amount_entry.get()
+            elif button_text == "Amount-N2":
+
+                no2_amount_entry = self.no_frame.grid_slaves(row=3, column=1)[0]
+                amount = no2_amount_entry.get()
+            elif button_text == "Amount-N3":
+                no3_amount_entry = self.no_frame.grid_slaves(row=5, column=1)[0]
+                amount = no3_amount_entry.get()
+            elif button_text == "Amount-N4":
+                no4_amount_entry = self.no_frame.grid_slaves(row=7, column=1)[0]
+                amount = no4_amount_entry.get()
+            else:
+                amount = "0"
+            # 输入金额
+            amount_input.send_keys(str(amount))
+              
+        except Exception as e:
+            self.logger.error(f"Amount操作失败: {str(e)}")
 
 if __name__ == "__main__":
     try:
